@@ -220,30 +220,6 @@ static void writeArgsFile(const std::string& path, const std::vector<std::string
     for (const auto& a : liteArgs) f << a << "\n";
 }
 
-
-static std::string base64Encode(const std::string& data) {
-    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve((data.size() + 2) / 3 * 4);
-    size_t i = 0;
-    for (; i + 2 < data.size(); i += 3) {
-        unsigned n = ((unsigned char)data[i] << 16) | ((unsigned char)data[i+1] << 8) | (unsigned char)data[i+2];
-        out += table[(n >> 18) & 63];
-        out += table[(n >> 12) & 63];
-        out += table[(n >> 6) & 63];
-        out += table[n & 63];
-    }
-    if (i < data.size()) {
-        unsigned n = (unsigned char)data[i] << 16;
-        if (i + 1 < data.size()) n |= (unsigned char)data[i+1] << 8;
-        out += table[(n >> 18) & 63];
-        out += table[(n >> 12) & 63];
-        out += (i + 1 < data.size()) ? table[(n >> 6) & 63] : '=';
-        out += (i + 1 < data.size()) ? table[n & 63] : '=';
-    }
-    return out;
-}
-
 static std::vector<std::string> buildQemuArgs(const std::string& qemuBin,
                                               const std::string& accel,
                                               const std::string& dir,
@@ -312,18 +288,8 @@ static std::vector<std::string> buildQemuArgs(const std::string& qemuBin,
     args.push_back(dir + "/vmlinuz-lite-qemu");
     args.push_back("-initrd");
     args.push_back(dir + "/lite-initramfs.cpio.gz");
-    std::string appendStr = "console=ttyS0 quiet net.ifnames=0 biosdevname=0";
-    {
-        std::ifstream af(argsFile, std::ios::binary);
-        std::ostringstream oss;
-        oss << af.rdbuf();
-        std::string content = oss.str();
-        if (!content.empty()) {
-            appendStr += " lite_args_b64=" + base64Encode(content);
-        }
-    }
     args.push_back("-append");
-    args.push_back(appendStr);
+    args.push_back("console=ttyS0 quiet net.ifnames=0 biosdevname=0");
     args.push_back("-display");
     args.push_back("none");
     args.push_back("-serial");
@@ -414,6 +380,7 @@ int main(int argc, char** argv) {
         guestArgs.push_back("--base-dir"); guestArgs.push_back("/data");
         guestArgs.push_back("--host");     guestArgs.push_back(g_guestHost);
         guestArgs.push_back("--port");     guestArgs.push_back(g_guestPort);
+        guestArgs.push_back("--dns");      guestArgs.push_back("10.0.2.3");
         writeArgsFile(argsFile, guestArgs);
     }
 

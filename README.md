@@ -57,9 +57,14 @@ Android.
 c++ -std=c++11 -O2 -o wrapper-lite-qemu wrapper-lite-qemu.cpp
 
 # login first (forwards --login to the guest lite), then serve
-./wrapper-lite-qemu --login user:pass --code-from-file
+./wrapper-lite-qemu --login user
 ./wrapper-lite-qemu
 ```
+
+With `--login user`, the guest prompts for the password and any 2FA code on
+the console, which keeps the password out of the process list and shell
+history. `--code-from-file` does not work under QEMU: the guest's data disk is
+not reachable from the host.
 
 The launcher locates the QEMU binary in this order:
 
@@ -113,13 +118,14 @@ All responses use:
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--login user:pass` | — | login, cache tokens, then exit |
+| `--login user[:pass]` | — | login, cache tokens, then exit; prompts for the password when omitted |
 | `--code-from-file` | off | read 2FA code from file |
 | `--host` | `127.0.0.1` | listen address |
 | `--port` | `12340` | listen port |
 | `--base-dir` | `data` | data directory |
 | `--device-info` | auto | override the entire device-info string (see [Device info](#device-info)) |
 | `--proxy` | — | proxy URL |
+| `--dns` | `223.5.5.5,223.6.6.6` | comma-separated DNS servers, up to 4 (the QEMU launcher passes `10.0.2.3`) |
 | `--debug` | off | debug logging; disables SSL verify in Release |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 | `--log-file` | — | log file path |
@@ -174,8 +180,10 @@ Environment variables (fallbacks; command-line flags take precedence):
 
 ## Build notes
 
-- Release: SSL verification is enabled by default. Pass `--debug` to disable it temporarily.
-- Debug: SSL verification is disabled by default.
+- Release: TLS certificate verification is enabled by default, using the CA
+  bundle at `rootfs/system/etc/security/cacert.pem`. Pass `--debug` to disable it
+  temporarily.
+- Debug: TLS certificate verification is disabled by default.
 
 ## License
 

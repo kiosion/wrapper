@@ -24,6 +24,7 @@ char* amUsername = nullptr;
 char* amPassword = nullptr;
 char* device_infos[9];
 char g_base_dir[256] = "data";
+static char g_dns_servers[256] = "223.5.5.5,223.6.6.6";
 int offlineFlag = 0;
 uint8_t leaseMgr[256];
 #ifdef LITE_RELEASE
@@ -66,8 +67,13 @@ void init(const char* device_info_str) {
     setenv("ANDROID_DNS_MODE", "local", 1);
     setenv("ANDROID_DATA", "/data", 1);
     setenv("ANDROID_ROOT", "/system", 1);
-    static const char* resolvers[2] = {"223.5.5.5", "223.6.6.6"};
-    _resolv_set_nameservers_for_net(0, resolvers, 2, ".");
+    static char* prev_dns_copy = nullptr;
+    if (prev_dns_copy) free(prev_dns_copy);
+    char* resolvers[4] = {nullptr};
+    split_string_safe(g_dns_servers, ",", resolvers, 4, &prev_dns_copy);
+    int resolver_count = 0;
+    while (resolver_count < 4 && resolvers[resolver_count]) resolver_count++;
+    _resolv_set_nameservers_for_net(0, (const char**)resolvers, resolver_count, ".");
 
     union std_string conf1 = new_std_string(device_infos[8] ? device_infos[8] : "");
     union std_string conf2 = new_std_string("");
@@ -171,6 +177,16 @@ int curl_easy_setopt_hook(void *curl, int32_t option, ...) {
         orig_curl_easy_setopt(curl, 43, 1L);
         return orig_curl_easy_setopt(curl, option, 0L);
     }
+    if (!g_ssl_verify_disabled) {
+        /* The Apple libraries accept any server certificate on their own. */
+        if (option == CURLOPT_SSL_VERIFYPEER) return orig_curl_easy_setopt(curl, option, 1L);
+        if (option == CURLOPT_SSL_VERIFYHOST) return orig_curl_easy_setopt(curl, option, 2L);
+        if (option == CURLOPT_URL) {
+            orig_curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+            orig_curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+            orig_curl_easy_setopt(curl, CURLOPT_CAINFO, kCaBundlePath);
+        }
+    }
     return orig_curl_easy_setopt(curl, option, param);
 }
 
@@ -182,14 +198,16 @@ void install_hooks() {
               (void*)&allDebug, (void**)&orig_debug_log_enabled);
     DobbyHook((void*)&__android_log_print, (void*)&log_print_hook, (void**)&orig_log_print);
     DobbyHook((void*)&__android_log_write, (void*)&log_write_hook, (void**)&orig_log_write);
-    if (g_ssl_verify_disabled) {
-        DobbyHook((void*)&curl_easy_setopt, (void*)&curl_easy_setopt_hook, (void**)&orig_curl_easy_setopt);
-    }
+    DobbyHook((void*)&curl_easy_setopt, (void*)&curl_easy_setopt_hook, (void**)&orig_curl_easy_setopt);
     LOG_DEBUG("debug hooks installed");
 }
 
 void set_base_dir(const char* dir) {
     snprintf(g_base_dir, sizeof(g_base_dir), "%s", dir ? dir : "data");
+}
+
+void set_dns_servers(const char* servers) {
+    snprintf(g_dns_servers, sizeof(g_dns_servers), "%s", servers);
 }
 
 void set_device_info(const char* device_info) {

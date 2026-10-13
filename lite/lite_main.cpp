@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <termios.h>
 #include <pthread.h>
 #include "cJSON.h"
 #include "logger.h"
@@ -37,6 +38,7 @@ static int g_port = 12340;
 static bool g_login_only = false;
 static std::string g_login_credentials;
 static std::string g_proxy;
+static std::string g_dns;
 /* Device info: <client>/<version>/<platform>/<osver>/<model>/<build>/<locale>/<lang>/<android-id>.
    The Android ID is derived from the account username (hashed) and persisted so
    each account keeps a stable device identity; without a username the persisted
@@ -463,10 +465,31 @@ static void signal_worker() {
 /* ============================== */
 
 static void print_usage() {
-    LOG_INFO("usage: lite [--login user:pass] [--host 127.0.0.1] [--port 12340]");
+    LOG_INFO("usage: lite [--login user[:pass]] [--host 127.0.0.1] [--port 12340]");
     LOG_INFO("            [--device-info STR] [--base-dir data] [--proxy URL] [--debug]");
+    LOG_INFO("            [--dns ADDR[,ADDR]]");
     LOG_INFO("            [--log-level debug|info|warn|error] [--log-file PATH]");
     LOG_INFO("            [--token-refresh-interval SECONDS]");
+}
+
+static bool read_password(std::string& out) {
+    struct termios saved;
+    if (tcgetattr(STDIN_FILENO, &saved) != 0) return false;
+    struct termios silent = saved;
+    silent.c_lflag &= ~ECHO;
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &silent) != 0) return false;
+    printf("Password: ");
+    fflush(stdout);
+    char buf[256];
+    bool ok = fgets(buf, sizeof(buf), stdin) != nullptr;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved);
+    printf("\n");
+    fflush(stdout);
+    if (!ok) return false;
+    out = buf;
+    memset(buf, 0, sizeof(buf));
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    return !out.empty();
 }
 
 static LogLevel parse_log_level(const std::string& s) {
@@ -518,6 +541,7 @@ int main(int argc, char* argv[]) {
             g_login_credentials = cmdline_args[++i];
         }
         else if (arg == "--device-info" && i + 1 < cmdline_args.size()) g_device_info_override = cmdline_args[++i];
+        else if (arg == "--dns" && i + 1 < cmdline_args.size()) g_dns = cmdline_args[++i];
         else if (arg == "--base-dir" && i + 1 < cmdline_args.size()) g_base_dir = cmdline_args[++i];
         else if (arg == "--help" || arg == "-h") {
             print_usage();
@@ -533,16 +557,26 @@ int main(int argc, char* argv[]) {
     if (g_token_refresh_interval <= 0) g_token_refresh_interval = 1800;
     Logger::get().configure(parse_log_level(g_log_level), g_log_file, 5 * 1024 * 1024);
     set_base_dir(g_base_dir.c_str());
+    if (!g_dns.empty()) set_dns_servers(g_dns.c_str());
     g_tokens.base_dir = g_base_dir;
 
     if (g_login_only) {
         auto colon = g_login_credentials.find(':');
-        if (colon == std::string::npos) {
-            LOG_ERROR("invalid login format, expected user:pass");
+        std::string username = g_login_credentials.substr(0, colon);
+        if (username.empty()) {
+            LOG_ERROR("invalid login format, expected user or user:pass");
             return 1;
         }
-        std::string username = g_login_credentials.substr(0, colon);
-        std::string password = g_login_credentials.substr(colon + 1);
+        std::string password;
+        if (colon != std::string::npos) {
+            password = g_login_credentials.substr(colon + 1);
+        } else if (!isatty(STDIN_FILENO)) {
+            LOG_ERROR("no password given and stdin is not a terminal; pass --login user:pass");
+            return 1;
+        } else if (!read_password(password)) {
+            LOG_ERROR("failed to read password");
+            return 1;
+        }
         set_credentials(username.c_str(), password.c_str());
         g_resolved_device_info = resolve_device_info(username);
 
